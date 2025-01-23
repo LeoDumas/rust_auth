@@ -9,6 +9,9 @@ use sqlx::{postgres::PgPoolOptions, Pool, Postgres};
 use std::{net::SocketAddr, sync::Arc};
 use dotenv::dotenv;
 
+mod utils;
+use utils::jwt_utils;
+
 
 #[derive(Debug, Serialize, Deserialize, sqlx::FromRow)]
 struct User {
@@ -17,6 +20,12 @@ struct User {
     email: String,
     password: String,
     created_at: chrono::DateTime<chrono::Utc>,
+}
+
+#[derive(Debug, Deserialize)]
+struct LoginRequest{
+    email: String,
+    password: String,
 }
 
 #[derive(Debug, Deserialize)]
@@ -66,6 +75,7 @@ async fn main() -> anyhow::Result<()> {
         .route("/", get(hello_world))
         .route("/users", post(create_user))
         .route("/users", get(get_users))
+        .route("/auth/login", post(login))
         .with_state(Arc::new(pool));
 
     let addr = SocketAddr::from(([127, 0, 0, 1], 3000));
@@ -109,13 +119,51 @@ async fn create_user(
     Ok(Json(user))
 }
 
-// // For login autgentication later
-// async fn verify_password(
-//     stored_hash: &str,
-//     attempted_password: &str
-// ) -> Result<bool, bcrypt::BcryptError> {
-//     bcrypt::verify(attempted_password, stored_hash)
-// }
+async fn verify_password(
+    stored_hash: &str,
+    attempted_password: &str
+) -> Result<bool, bcrypt::BcryptError> {
+    bcrypt::verify(attempted_password, stored_hash)
+}
+
+async fn login(
+    State(pool): State<Arc<Pool<Postgres>>>,
+    Json(payload): Json<LoginRequest>,
+) -> Result<impl axum::response::IntoResponse, (StatusCode, String)> {
+    // Fetch the user by email
+    let user = sqlx::query_as::<_, User>(
+        r#"SELECT id, email, username, password, created_at FROM users WHERE email = $1"#,
+    )
+    .bind(&payload.email)
+    .fetch_optional(&*pool)
+    .await
+    .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
+
+    let user = user.ok_or_else(|| {
+        // Use a generic error message to prevent user enumeration
+        (StatusCode::UNAUTHORIZED, "Invalid email or password".to_string())
+    })?;
+
+    // Verify the password
+    let is_valid = verify_password(&user.password, &payload.password)
+        .await
+        .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
+
+    if !is_valid {
+        return Err((StatusCode::UNAUTHORIZED, "Invalid email or password".to_string()));
+    }
+
+    // Generate JWT token
+    let token = jwt_utils::generate_token(user.id, user.email.clone(), user.username.clone())
+        .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
+
+    Ok(Json(serde_json::json!({
+        "token": token,
+        "user_id": user.id,
+        "user_email": user.email,
+        "user_username": user.username,
+    })))
+}
 
 async fn get_users(State(pool): State<Arc<Pool<Postgres>>>) -> Result<Json<Vec<UserResponse>>, (StatusCode, String)> {
     let users = sqlx::query_as::<_, UserResponse>(
