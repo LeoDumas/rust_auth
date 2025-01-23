@@ -1,12 +1,12 @@
 use serde::{Serialize, Deserialize};
 use chrono::{Utc, Duration};
-use jsonwebtoken::{encode, EncodingKey, Header}; // , decode, DecodingKey, Validation
+use jsonwebtoken::{encode, EncodingKey, Header, decode, DecodingKey, Validation};
 use std::error::Error;
 use dotenv::dotenv;
 
 // Represent the payload of the jwt
 #[derive(Debug, Serialize, Deserialize)]
-struct Claims {
+pub struct Claims {
   sub: String,
   exp: usize,
   // Allow us to extract the email and username from the connected user.
@@ -39,15 +39,15 @@ pub fn generate_token(u_id: i32, u_email: String, u_username: String) -> Result<
   Ok(token)
 }
 
-// pub fn validate_token(token: &str) -> Result<Claims, Box<dyn Error>>{
-//   let jwt_secret = std::env::var("JWT_SECRET")?;
-//   let decoding_key = DecodingKey::from_secret(jwt_secret.as_bytes());
+pub fn validate_token(token: &str) -> Result<Claims, Box<dyn Error>>{
+  let jwt_secret = std::env::var("JWT_SECRET")?;
+  let decoding_key = DecodingKey::from_secret(jwt_secret.as_bytes());
 
-//   let validation = Validation::default();
+  let validation = Validation::default();
 
-//   let token_data = decode(
-//     token,
-//     &decoding_key,
-//     &validation)?;
-//   Ok(token_data.claims)
-// }
+  let token_data = decode(
+    token,
+    &decoding_key,
+    &validation)?;
+  Ok(token_data.claims)
+}

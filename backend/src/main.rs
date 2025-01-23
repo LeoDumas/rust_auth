@@ -1,9 +1,14 @@
 use axum::{
+    extract::FromRequestParts,
     extract::State,
+    RequestPartsExt,
     http::StatusCode,
     routing::{get, post},
     Json, Router,
 };
+use axum_extra::TypedHeader;
+use headers::{Authorization, authorization::Bearer};
+use axum::http::request::Parts;
 use serde::{Deserialize, Serialize};
 use sqlx::{postgres::PgPoolOptions, Pool, Postgres};
 use std::{net::SocketAddr, sync::Arc};
@@ -41,6 +46,37 @@ struct UserResponse {
     username: String,
     email: String,
     created_at: chrono::DateTime<chrono::Utc>,
+}
+
+
+// Acts as a guard for routes requiring authentication with the JWT
+#[derive(Debug)]
+struct AuthenticatedUser(jwt_utils::Claims);
+
+// Implementation of Axum's FromRequestParts trait to enable automatic authentication validation for protected routes
+impl<S> FromRequestParts<S> for AuthenticatedUser
+where
+    S: Send + Sync,
+{
+    type Rejection = (StatusCode, &'static str);
+
+    async fn from_request_parts(
+        parts: &mut Parts,
+        _state: &S,
+    ) -> Result<Self, Self::Rejection> {
+        // Now we can use `.extract()`
+        let TypedHeader(Authorization(bearer)) = parts
+            .extract::<TypedHeader<Authorization<Bearer>>>()
+            .await
+            .map_err(|_| (StatusCode::UNAUTHORIZED, "Missing authorization header"))?;
+
+        // Validate the token
+        let token = bearer.token();
+        let claims = jwt_utils::validate_token(token)
+            .map_err(|_| (StatusCode::UNAUTHORIZED, "Invalid token"))?;
+
+        Ok(AuthenticatedUser(claims))
+    }
 }
 
 #[tokio::main]
@@ -165,7 +201,11 @@ async fn login(
     })))
 }
 
-async fn get_users(State(pool): State<Arc<Pool<Postgres>>>) -> Result<Json<Vec<UserResponse>>, (StatusCode, String)> {
+async fn get_users(
+    AuthenticatedUser(_claims): AuthenticatedUser,  //<- AuthenticatedUser used to make sure that this function
+    State(pool): State<Arc<Pool<Postgres>>>,
+) -> Result<Json<Vec<UserResponse>>, (StatusCode, String)> {
+    // Existing implementation...
     let users = sqlx::query_as::<_, UserResponse>(
         r#"
         SELECT id, username, email, created_at
