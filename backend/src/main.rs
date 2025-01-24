@@ -5,6 +5,7 @@ use axum::{
     http::StatusCode,
     routing::{get, post},
     Json, Router,
+    http::Method,
 };
 use axum_extra::TypedHeader;
 use headers::{Authorization, authorization::Bearer};
@@ -13,6 +14,7 @@ use serde::{Deserialize, Serialize};
 use sqlx::{postgres::PgPoolOptions, Pool, Postgres};
 use std::{net::SocketAddr, sync::Arc};
 use dotenv::dotenv;
+use tower_http::cors::{CorsLayer, Any};
 
 mod utils;
 use utils::jwt_utils;
@@ -107,12 +109,18 @@ async fn main() -> anyhow::Result<()> {
     .execute(&pool)
     .await?;
 
+    let cors = CorsLayer::new()
+        .allow_origin(Any) // Dev only
+        .allow_methods([Method::GET, Method::POST, Method::PUT, Method::DELETE])
+        .allow_headers(Any); // Dev only, need to adapt based on all requests
+
     let app = Router::new()
         .route("/", get(hello_world))
-        .route("/users", post(create_user))
         .route("/users", get(get_users))
+        .route("/auth/register", post(create_user))
         .route("/auth/login", post(login))
-        .with_state(Arc::new(pool));
+        .with_state(Arc::new(pool))
+        .layer(cors);
 
     let addr = SocketAddr::from(([127, 0, 0, 1], 3000));
     let listener = tokio::net::TcpListener::bind(addr).await?;
